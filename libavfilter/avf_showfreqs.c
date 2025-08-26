@@ -37,7 +37,7 @@
 #include "window_func.h"
 
 enum DataMode       { MAGNITUDE, PHASE, DELAY, NB_DATA };
-enum DisplayMode    { LINE, BAR, DOT, NB_MODES };
+enum DisplayMode    { LINE, BAR, DOT, PIPE, NB_MODES };
 enum ChannelMode    { COMBINED, SEPARATE, NB_CMODES };
 enum FrequencyScale { FS_LINEAR, FS_LOG, FS_RLOG, NB_FSCALES };
 enum AmplitudeScale { AS_LINEAR, AS_SQRT, AS_CBRT, AS_LOG, NB_ASCALES };
@@ -88,6 +88,7 @@ static const AVOption showfreqs_options[] = {
         { "line", "show lines",  0, AV_OPT_TYPE_CONST, {.i64=LINE},   0, 0, FLAGS, .unit = "mode" },
         { "bar",  "show bars",   0, AV_OPT_TYPE_CONST, {.i64=BAR},    0, 0, FLAGS, .unit = "mode" },
         { "dot",  "show dots",   0, AV_OPT_TYPE_CONST, {.i64=DOT},    0, 0, FLAGS, .unit = "mode" },
+        { "pipe", "show pipes",  0, AV_OPT_TYPE_CONST, {.i64=PIPE},   0, 0, FLAGS, .unit = "mode" },
     { "ascale", "set amplitude scale", OFFSET(ascale), AV_OPT_TYPE_INT, {.i64=AS_LOG}, 0, NB_ASCALES-1, FLAGS, .unit = "ascale" },
         { "lin",  "linear",      0, AV_OPT_TYPE_CONST, {.i64=AS_LINEAR}, 0, 0, FLAGS, .unit = "ascale" },
         { "sqrt", "square root", 0, AV_OPT_TYPE_CONST, {.i64=AS_SQRT},   0, 0, FLAGS, .unit = "ascale" },
@@ -294,6 +295,7 @@ static inline void plot_freq(ShowFreqsContext *s, int ch,
     const float avg = s->avg_data[ch][f];
     const float bsize = get_bsize(s, f);
     const int sx = get_sx(s, f);
+    int top = 0;
     int end = outlink->h;
     int x, y, i;
 
@@ -317,8 +319,9 @@ static inline void plot_freq(ShowFreqsContext *s, int ch,
         y = a * outlink->h - 1;
         break;
     case SEPARATE:
+        top = (outlink->h / s->nb_draw_channels) * ch;
         end = (outlink->h / s->nb_draw_channels) * (ch + 1);
-        y = (outlink->h / s->nb_draw_channels) * ch + a * (outlink->h / s->nb_draw_channels) - 1;
+        y = top + a * (outlink->h / s->nb_draw_channels) - 1;
         break;
     default:
         av_assert0(0);
@@ -364,6 +367,14 @@ static inline void plot_freq(ShowFreqsContext *s, int ch,
     case DOT:
         for (x = sx; x < sx + bsize && x < w; x++)
             draw_dot(out, x, y, fg);
+        break;
+    case PIPE:
+        // T - - - y - - - - - - - - E
+        //         #-----------------#  BAR
+        //     #-----------------#      PIPE
+        for (x = sx + 1; x < sx + bsize - 1 && x < w - 1; x++)
+            for (i = y - (y - top) / 2; i < end - (y - top) / 2; i++)
+                draw_dot(out, x, i, fg);
         break;
     }
 }
