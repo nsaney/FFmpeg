@@ -255,6 +255,34 @@ static inline void draw_dot(AVFrame *out, int x, int y, uint8_t fg[4])
         AV_WL32(out->data[0] + y * out->linesize[0] + x * 4, AV_RL32(fg));
 }
 
+static inline void draw_vertical_segment(AVFrame *out, int x, int y0, int yf,
+                                         int y_bound, uint8_t fg[4])
+{
+    int y;
+    if (y0 < 0) {
+        y0 = 0;
+    }
+    if (y_bound < 0) {
+        y_bound = yf;
+    }
+    for (y = y0; y < yf && y < y_bound; y++)
+        draw_dot(out, x, y, fg);
+}
+
+static inline void fill_rectangle(AVFrame *out, int x0, int xf, int x_bound,
+                                  int y0, int yf, int y_bound, uint8_t fg[4])
+{
+    int x;
+    if (x0 < 0) {
+        x0 = 0;
+    }
+    if (x_bound < 0) {
+        x_bound = xf;
+    }
+    for (x = x0; x < xf && x < x_bound; x++)
+        draw_vertical_segment(out, x, y0, yf, y_bound, fg);
+}
+
 static int get_sx(ShowFreqsContext *s, int f)
 {
     switch (s->fscale) {
@@ -295,9 +323,9 @@ static inline void plot_freq(ShowFreqsContext *s, int ch,
     const float avg = s->avg_data[ch][f];
     const float bsize = get_bsize(s, f);
     const int sx = get_sx(s, f);
-    int top = 0;
     int end = outlink->h;
     int x, y, i;
+    int top, pipe_gap, pipe_y0, pipe_yf;
 
     switch(s->ascale) {
     case AS_SQRT:
@@ -369,12 +397,27 @@ static inline void plot_freq(ShowFreqsContext *s, int ch,
             draw_dot(out, x, y, fg);
         break;
     case PIPE:
-        // T - - - y - - - - - - - - E
-        //         #-----------------#  BAR
-        //     #-----------------#      PIPE
-        for (x = sx + 1; x < sx + bsize - 1 && x < w - 1; x++)
-            for (i = y - (y - top) / 2; i < end - (y - top) / 2; i++)
-                draw_dot(out, x, i, fg);
+        //       T - - - - y - -|- - - - - - - E
+        // BAR   [........]<====|==============>
+        // PIPE  [....<=========|=========>....]
+        pipe_gap = (y - top) / 2;
+        pipe_y0 = y - pipe_gap;
+        pipe_yf = end - pipe_gap;
+        if (bsize < 2) {
+            fill_rectangle(out, sx, sx + bsize,     w,     pipe_y0, pipe_yf, end, fg);
+        } else if (bsize < 8) {
+            fill_rectangle(out, sx, sx + bsize - 1, w - 1, pipe_y0, pipe_yf, end, fg);
+        } else {
+            for (x = sx + 1; x < sx + bsize - 1 && x < w - 1; x++) {
+                if (x < sx + 4 || sx + bsize - 5 < x) {
+                    draw_vertical_segment(out, x, pipe_y0 + 12, pipe_yf - 12, end, fg);
+                } else if (x < sx + 8 || sx + bsize - 9 < x) {
+                    draw_vertical_segment(out, x, pipe_y0 + 4, pipe_yf - 4, end, fg);
+                } else {
+                    draw_vertical_segment(out, x, pipe_y0, pipe_yf, end, fg);
+                }
+            }
+        }
         break;
     }
 }
