@@ -244,7 +244,7 @@ static int config_output(AVFilterLink *outlink)
     return 0;
 }
 
-static inline void draw_dot(AVFrame *out, int x, int y, uint8_t fg[4])
+static inline void draw_dot(AVFrame *out, int x, int y, const uint8_t fg[4])
 {
 
     uint32_t color = AV_RL32(out->data[0] + y * out->linesize[0] + x * 4);
@@ -255,32 +255,35 @@ static inline void draw_dot(AVFrame *out, int x, int y, uint8_t fg[4])
         AV_WL32(out->data[0] + y * out->linesize[0] + x * 4, AV_RL32(fg));
 }
 
-static inline void draw_vertical_segment(AVFrame *out, int x, int y0, int yf,
-                                         int y_bound, uint8_t fg[4])
-{
-    int y;
-    if (y0 < 0) {
-        y0 = 0;
-    }
-    if (y_bound < 0) {
-        y_bound = yf;
-    }
-    for (y = y0; y < yf && y < y_bound; y++)
-        draw_dot(out, x, y, fg);
-}
-
-static inline void fill_rectangle(AVFrame *out, int x0, int xf, int x_bound,
-                                  int y0, int yf, int y_bound, uint8_t fg[4])
+static inline void fill_rectangle(AVFrame *out, const uint8_t fg[4],
+                                  int x0, int xf, int x_min, int x_max,
+                                  int y0, int yf, int y_min, int y_max)
 {
     int x;
-    if (x0 < 0) {
-        x0 = 0;
-    }
-    if (x_bound < 0) {
-        x_bound = xf;
-    }
-    for (x = x0; x < xf && x < x_bound; x++)
-        draw_vertical_segment(out, x, y0, yf, y_bound, fg);
+    if (xf < x0) { x = xf; xf = x0; x0 = x; }
+    if (x0 < x_min) x0 = x_min;
+    if (xf > x_max) xf = x_max;
+    int y;
+    if (yf < y0) { y = yf; yf = y0; y0 = y; }
+    if (y0 < y_min) y0 = y_min;
+    if (yf > y_max) yf = y_max;
+    for (x = x0; x < xf; x++)
+        for (y = y0; y < yf; y++)
+            draw_dot(out, x, y, fg);
+}
+
+static inline void fill_and_mirror_rectangle(AVFrame *out, const uint8_t fg[4],
+                                             int x0, int xf, int x_min, int x_max,
+                                             int y0, int yf, int y_min, int y_max)
+{
+    int dx0 = x0 - x_min;
+    int dxf = xf - x_min;
+    int dy0 = y0 - y_min;
+    int dyf = yf - y_min;
+    fill_rectangle(out, fg,          x0,          xf, x_min, x_max,          y0,          yf, y_min, y_max);
+    fill_rectangle(out, fg, x_max - dx0, x_max - dxf, x_min, x_max,          y0,          yf, y_min, y_max);
+    fill_rectangle(out, fg,          x0,          xf, x_min, x_max, y_max - dy0, y_max - dyf, y_min, y_max);
+    fill_rectangle(out, fg, x_max - dx0, x_max - dxf, x_min, x_max, y_max - dy0, y_max - dyf, y_min, y_max);
 }
 
 static int get_sx(ShowFreqsContext *s, int f)
@@ -324,8 +327,10 @@ static inline void plot_freq(ShowFreqsContext *s, int ch,
     const float bsize = get_bsize(s, f);
     const int sx = get_sx(s, f);
     int end = outlink->h;
+    int pipe_x0, pipe_xf, pipe_xmid;
+    int top, pipe_gap, pipe_y0, pipe_yf, pipe_ymid;
+    const uint8_t bd[4] = { 0x2f, 0x2f, 0x2f, 0xff };
     int x, y, i;
-    int top, pipe_gap, pipe_y0, pipe_yf;
 
     switch(s->ascale) {
     case AS_SQRT:
@@ -397,26 +402,58 @@ static inline void plot_freq(ShowFreqsContext *s, int ch,
             draw_dot(out, x, y, fg);
         break;
     case PIPE:
+        pipe_x0 = sx;
+        pipe_xf = sx + bsize;
         //       T - - - - y - -|- - - - - - - E
         // BAR   [........]<====|==============>
         // PIPE  [....<=========|=========>....]
         pipe_gap = (y - top) / 2;
         pipe_y0 = y - pipe_gap;
         pipe_yf = end - pipe_gap;
-        if (bsize < 2) {
-            fill_rectangle(out, sx, sx + bsize,     w,     pipe_y0, pipe_yf, end, fg);
-        } else if (bsize < 8) {
-            fill_rectangle(out, sx, sx + bsize - 1, w - 1, pipe_y0, pipe_yf, end, fg);
+        pipe_ymid = (pipe_y0 + pipe_yf) / 2;
+        if (pipe_xf - pipe_x0 < 2 || pipe_yf - pipe_y0 < 2) {
+            fill_rectangle(out, fg, pipe_x0, pipe_xf,   0,   w,
+                                    pipe_y0, pipe_yf, top, end);
+        } else if (pipe_xf - pipe_x0 < 12 || pipe_yf - pipe_y0 < 12) {
+            pipe_xf -= 1;
+            fill_rectangle(out, fg, pipe_x0, pipe_xf,   0,   w,
+                                    pipe_y0, pipe_yf, top, end);
         } else {
-            for (x = sx + 1; x < sx + bsize - 1 && x < w - 1; x++) {
-                if (x < sx + 4 || sx + bsize - 5 < x) {
-                    draw_vertical_segment(out, x, pipe_y0 + 12, pipe_yf - 12, end, fg);
-                } else if (x < sx + 8 || sx + bsize - 9 < x) {
-                    draw_vertical_segment(out, x, pipe_y0 + 4, pipe_yf - 4, end, fg);
-                } else {
-                    draw_vertical_segment(out, x, pipe_y0, pipe_yf, end, fg);
-                }
-            }
+            if (pipe_xf > w)
+                break;
+            // A  B  C  C  D  D  ... D  D  C  C  B  A
+            // .  .  .  .  BD BD ...
+            // .  .  BD BD fg fg
+            // .  BD fg fg fg fg
+            // .  BD fg fg fg fg
+            // BD fg fg fg fg fg
+            // BD fg fg fg fg fg ...
+            // ...            ...
+            pipe_x0 += 1;
+            pipe_xf -= 1;
+            pipe_xmid = (pipe_x0 + pipe_xf) / 2;
+            // cols A
+            fill_and_mirror_rectangle(out, bd, pipe_x0    , pipe_x0 + 2, pipe_x0, pipe_xf,
+                                               pipe_y0 + 8, pipe_ymid  , pipe_y0, pipe_yf);
+            // cols B
+            x = pipe_x0 + 2;
+            y = pipe_y0 + 4;
+            fill_and_mirror_rectangle(out, bd, x, x + 2, pipe_x0, pipe_xf,
+                                               y, y + 4, pipe_y0, pipe_yf);
+            fill_and_mirror_rectangle(out, fg, x + 2, pipe_xmid, pipe_x0, pipe_xf,
+                                               y + 4, pipe_ymid, pipe_y0, pipe_yf);
+            // cols C
+            x = pipe_x0 + 4;
+            y = pipe_y0 + 2;
+            fill_and_mirror_rectangle(out, bd, x, x + 4, pipe_x0, pipe_xf,
+                                               y, y + 2, pipe_y0, pipe_yf);
+            fill_and_mirror_rectangle(out, fg, x + 4, pipe_xmid, pipe_x0, pipe_xf,
+                                               y + 2, pipe_ymid, pipe_y0, pipe_yf);
+            // cols D
+            fill_and_mirror_rectangle(out, bd, pipe_x0 + 8, pipe_xmid  , pipe_x0, pipe_xf,
+                                               pipe_y0    , pipe_y0 + 2, pipe_y0, pipe_yf);
+            fill_rectangle(out, fg, pipe_x0 + 8, pipe_xf - 8, pipe_x0, pipe_xf,
+                                    pipe_y0 + 2, pipe_yf - 2, pipe_y0, pipe_yf);
         }
         break;
     }
