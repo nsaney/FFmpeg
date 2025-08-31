@@ -327,9 +327,10 @@ static inline void plot_freq(ShowFreqsContext *s, int ch,
     const float bsize = get_bsize(s, f);
     const int sx = get_sx(s, f);
     int end = outlink->h;
-    int pipe_x0, pipe_xf, pipe_xmid;
-    int top, pipe_gap, pipe_y0, pipe_yf, pipe_ymid;
-    const uint8_t bd[4] = { 0x2f, 0x2f, 0x2f, 0xff };
+    int pipe_x0, pipe_xf, pipe_xm;
+    int top, pipe_gap, pipe_y0, pipe_yf, pipe_ym;
+    const uint8_t bd[4] = { 0x3f, 0x3f, 0x3f, 0xff };
+    const uint8_t pg[4] = { 0xdf, 0xdf, 0xdf, 0xff };
     int x, y, i;
 
     switch(s->ascale) {
@@ -410,50 +411,123 @@ static inline void plot_freq(ShowFreqsContext *s, int ch,
         pipe_gap = (y - top) / 2;
         pipe_y0 = y - pipe_gap;
         pipe_yf = end - pipe_gap;
-        pipe_ymid = (pipe_y0 + pipe_yf) / 2;
-        if (pipe_xf - pipe_x0 < 2 || pipe_yf - pipe_y0 < 2) {
-            fill_rectangle(out, fg, pipe_x0, pipe_xf,   0,   w,
-                                    pipe_y0, pipe_yf, top, end);
-        } else if (pipe_xf - pipe_x0 < 12 || pipe_yf - pipe_y0 < 12) {
-            pipe_xf -= 1;
-            fill_rectangle(out, fg, pipe_x0, pipe_xf,   0,   w,
-                                    pipe_y0, pipe_yf, top, end);
-        } else {
+        pipe_ym = (pipe_y0 + pipe_yf) / 2 + 1;
+        if (22 <= pipe_xf - pipe_x0 || 22 <= pipe_yf - pipe_y0) {
             if (pipe_xf > w)
                 break;
-            // A  B  C  C  D  D  ... D  D  C  C  B  A
-            // .  .  .  .  BD BD ...
-            // .  .  BD BD fg fg
-            // .  BD fg fg fg fg
-            // .  BD fg fg fg fg
-            // BD fg fg fg fg fg
-            // BD fg fg fg fg fg ...
+            // A  B  C  D  E  E  ... E  E  D  C  B  A
+            // .  .  .  .  ## ## ...
+            // .  .  ## ## [] []
+            // .  ## [] [] fg fg
+            // .  ## [] fg fg fg
+            // ## [] fg fg fg fg
+            // ## [] fg fg fg fg ...
             // ...            ...
             pipe_x0 += 1;
             pipe_xf -= 1;
-            pipe_xmid = (pipe_x0 + pipe_xf) / 2;
+            pipe_xm = (pipe_x0 + pipe_xf) / 2 + 1;
             // cols A
-            fill_and_mirror_rectangle(out, bd, pipe_x0    , pipe_x0 + 2, pipe_x0, pipe_xf,
-                                               pipe_y0 + 8, pipe_ymid  , pipe_y0, pipe_yf);
+            x = pipe_x0;
+            y = pipe_y0 + 8;
+            fill_and_mirror_rectangle(out, bd, x    , x + 2  , pipe_x0, pipe_xf,
+                                               y    , pipe_ym, pipe_y0, pipe_yf);
             // cols B
             x = pipe_x0 + 2;
             y = pipe_y0 + 4;
-            fill_and_mirror_rectangle(out, bd, x, x + 2, pipe_x0, pipe_xf,
-                                               y, y + 4, pipe_y0, pipe_yf);
-            fill_and_mirror_rectangle(out, fg, x + 2, pipe_xmid, pipe_x0, pipe_xf,
-                                               y + 4, pipe_ymid, pipe_y0, pipe_yf);
+            fill_and_mirror_rectangle(out, bd, x    , x + 2  , pipe_x0, pipe_xf,
+                                               y    , y + 4  , pipe_y0, pipe_yf);
+            fill_and_mirror_rectangle(out, pg, x    , x + 2  , pipe_x0, pipe_xf,
+                                               y + 4, pipe_ym, pipe_y0, pipe_yf);
             // cols C
             x = pipe_x0 + 4;
             y = pipe_y0 + 2;
-            fill_and_mirror_rectangle(out, bd, x, x + 4, pipe_x0, pipe_xf,
-                                               y, y + 2, pipe_y0, pipe_yf);
-            fill_and_mirror_rectangle(out, fg, x + 4, pipe_xmid, pipe_x0, pipe_xf,
-                                               y + 2, pipe_ymid, pipe_y0, pipe_yf);
+            fill_and_mirror_rectangle(out, bd, x    , x + 2  , pipe_x0, pipe_xf,
+                                               y    , y + 2  , pipe_y0, pipe_yf);
+            fill_and_mirror_rectangle(out, pg, x    , x + 2  , pipe_x0, pipe_xf,
+                                               y + 2, y + 6, pipe_y0, pipe_yf);
+            fill_and_mirror_rectangle(out, fg, x    , x + 2  , pipe_x0, pipe_xf,
+                                               y + 6, pipe_ym, pipe_y0, pipe_yf);
             // cols D
-            fill_and_mirror_rectangle(out, bd, pipe_x0 + 8, pipe_xmid  , pipe_x0, pipe_xf,
-                                               pipe_y0    , pipe_y0 + 2, pipe_y0, pipe_yf);
-            fill_rectangle(out, fg, pipe_x0 + 8, pipe_xf - 8, pipe_x0, pipe_xf,
-                                    pipe_y0 + 2, pipe_yf - 2, pipe_y0, pipe_yf);
+            x = pipe_x0 + 6;
+            y = pipe_y0 + 2;
+            fill_and_mirror_rectangle(out, bd, x    , x + 2  , pipe_x0, pipe_xf,
+                                               y    , y + 2  , pipe_y0, pipe_yf);
+            fill_and_mirror_rectangle(out, pg, x    , x + 2  , pipe_x0, pipe_xf,
+                                               y + 2, y + 4, pipe_y0, pipe_yf);
+            fill_and_mirror_rectangle(out, fg, x    , x + 2  , pipe_x0, pipe_xf,
+                                               y + 4, pipe_ym, pipe_y0, pipe_yf);
+            // cols E
+            x = pipe_x0 + 8;
+            y = pipe_y0;
+            fill_and_mirror_rectangle(out, bd, x    , pipe_xm , pipe_x0, pipe_xf,
+                                               y    , y + 2   , pipe_y0, pipe_yf);
+            fill_and_mirror_rectangle(out, pg, x    , pipe_xm , pipe_x0, pipe_xf,
+                                               y + 2, y + 4   , pipe_y0, pipe_yf);
+            fill_and_mirror_rectangle(out, fg, x    , pipe_xm , pipe_x0, pipe_xf,
+                                               y + 4, pipe_ym , pipe_y0, pipe_yf);
+        } else if (17 <= pipe_xf - pipe_x0 || 17 <= pipe_yf - pipe_y0) {
+            // A  B  C  C  ... C  C  B  A
+            // .  .  ## ## ...
+            // .  ## [] []
+            // ## [] fg fg
+            // ## [] fg fg ...
+            // ...      ...
+            pipe_xf -= 1;
+            pipe_xm = (pipe_x0 + pipe_xf) / 2 + 1;
+            // cols A
+            x = pipe_x0;
+            y = pipe_y0 + 4;
+            fill_and_mirror_rectangle(out, bd, x    , x + 2  , pipe_x0, pipe_xf,
+                                               y    , pipe_ym, pipe_y0, pipe_yf);
+            // cols B
+            x = pipe_x0 + 2;
+            y = pipe_y0 + 2;
+            fill_and_mirror_rectangle(out, bd, x    , x + 2  , pipe_x0, pipe_xf,
+                                               y    , y + 2  , pipe_y0, pipe_yf);
+            fill_and_mirror_rectangle(out, pg, x    , x + 2  , pipe_x0, pipe_xf,
+                                               y + 2, pipe_ym, pipe_y0, pipe_yf);
+            // cols C
+            x = pipe_x0 + 4;
+            y = pipe_y0;
+            fill_and_mirror_rectangle(out, bd, x    , pipe_xm, pipe_x0, pipe_xf,
+                                               y    , y + 2  , pipe_y0, pipe_yf);
+            fill_and_mirror_rectangle(out, pg, x    , pipe_xm, pipe_x0, pipe_xf,
+                                               y + 2, y + 4, pipe_y0, pipe_yf);
+            fill_and_mirror_rectangle(out, fg, x    , pipe_xm, pipe_x0, pipe_xf,
+                                               y + 4, pipe_ym, pipe_y0, pipe_yf);
+        } else if (7 <= pipe_xf - pipe_x0 || 7 <= pipe_yf - pipe_y0) {
+            // A B C C ... C C B A
+            // . . # # ...
+            // . # O O
+            // # O fg
+            // # O fg...
+            // ......
+            pipe_xf -= 1;
+            pipe_xm = (pipe_x0 + pipe_xf) / 2 + 1;
+            // cols A
+            x = pipe_x0;
+            y = pipe_y0 + 2;
+            fill_and_mirror_rectangle(out, bd, x    , x + 1  , pipe_x0, pipe_xf,
+                                               y    , pipe_ym, pipe_y0, pipe_yf);
+            // cols B
+            x = pipe_x0 + 1;
+            y = pipe_y0 + 1;
+            fill_and_mirror_rectangle(out, bd, x    , x + 1  , pipe_x0, pipe_xf,
+                                               y    , y + 1  , pipe_y0, pipe_yf);
+            fill_and_mirror_rectangle(out, pg, x    , x + 1  , pipe_x0, pipe_xf,
+                                               y + 1, pipe_ym, pipe_y0, pipe_yf);
+            // cols C
+            x = pipe_x0 + 2;
+            y = pipe_y0;
+            fill_and_mirror_rectangle(out, bd, x    , pipe_xm, pipe_x0, pipe_xf,
+                                               y    , y + 1  , pipe_y0, pipe_yf);
+            fill_and_mirror_rectangle(out, pg, x    , pipe_xm, pipe_x0, pipe_xf,
+                                               y + 1, y + 2, pipe_y0, pipe_yf);
+            fill_and_mirror_rectangle(out, fg, x    , pipe_xm, pipe_x0, pipe_xf,
+                                               y + 2, pipe_ym, pipe_y0, pipe_yf);
+        } else {
+            fill_rectangle(out, fg, pipe_x0, pipe_xf,   0,   w,
+                                    pipe_y0, pipe_yf, top, end);
         }
         break;
     }
