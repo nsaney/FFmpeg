@@ -88,7 +88,7 @@ typedef struct ShowFreqsContext {
 } ShowFreqsContext;
 
 #define OFFSET(x) offsetof(ShowFreqsContext, x)
-#define PIPE_MODE_CONTEXT_OFFSET(x) OFFSET(pipe_mode_ctx) + offsetof(ShowFreqsPipeModeContext, x)
+#define PIPE_MODE_OFFSET(x) OFFSET(pipe_mode_ctx) + offsetof(ShowFreqsPipeModeContext, x)
 #define FLAGS AV_OPT_FLAG_FILTERING_PARAM|AV_OPT_FLAG_VIDEO_PARAM
 
 static const AVOption showfreqs_options[] = {
@@ -124,9 +124,9 @@ static const AVOption showfreqs_options[] = {
         { "phase",     "show phase",      0, AV_OPT_TYPE_CONST, {.i64=PHASE},     0, 0, FLAGS, .unit = "data" },
         { "delay",     "show group delay",0, AV_OPT_TYPE_CONST, {.i64=DELAY},     0, 0, FLAGS, .unit = "data" },
     { "channels", "set channels to draw", OFFSET(ch_layout_str), AV_OPT_TYPE_STRING, {.str="all"}, 0, 0, FLAGS },
-    { "pipe_border_color",  "set pipe_border_color",  PIPE_MODE_CONTEXT_OFFSET(pipe_border_color),  AV_OPT_TYPE_STRING, {.str="0x3f3f3f"},  0,  0, FLAGS },
-    { "pipe_padding_color", "set pipe_padding_color", PIPE_MODE_CONTEXT_OFFSET(pipe_padding_color), AV_OPT_TYPE_STRING, {.str="0xdfdfdf"},  0,  0, FLAGS },
-    { "pipe_min_width",     "set pipe_min_width",     PIPE_MODE_CONTEXT_OFFSET(pipe_min_width),     AV_OPT_TYPE_INT,    {.i64=14},       0, 65536, FLAGS },
+    { "pipe_border_color",  "set pipe_border_color",  PIPE_MODE_OFFSET(pipe_border_color),  AV_OPT_TYPE_STRING, {.str="0x3f3f3f"},  0,  0, FLAGS },
+    { "pipe_padding_color", "set pipe_padding_color", PIPE_MODE_OFFSET(pipe_padding_color), AV_OPT_TYPE_STRING, {.str="0xdfdfdf"},  0,  0, FLAGS },
+    { "pipe_min_width",     "set pipe_min_width",     PIPE_MODE_OFFSET(pipe_min_width),     AV_OPT_TYPE_INT,    {.i64=14},       0, 65536, FLAGS },
     { NULL }
 };
 
