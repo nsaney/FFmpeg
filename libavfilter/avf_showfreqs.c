@@ -288,17 +288,19 @@ static inline void fill_rectangle(AVFrame *out, const uint8_t fg[4],
 }
 
 static inline void fill_and_mirror_rectangle(AVFrame *out, const uint8_t fg[4],
-                                             int x0, int xf, int x_min, int x_max,
-                                             int y0, int yf, int y_min, int y_max)
+                                             int x0, int xf, int x_lo, int x_hi,
+                                             int y0, int yf, int y_lo, int y_hi)
 {
-    int dx0 = x0 - x_min;
-    int dxf = xf - x_min;
-    int dy0 = y0 - y_min;
-    int dyf = yf - y_min;
-    fill_rectangle(out, fg,          x0,          xf, x_min, x_max,          y0,          yf, y_min, y_max);
-    fill_rectangle(out, fg, x_max - dx0, x_max - dxf, x_min, x_max,          y0,          yf, y_min, y_max);
-    fill_rectangle(out, fg,          x0,          xf, x_min, x_max, y_max - dy0, y_max - dyf, y_min, y_max);
-    fill_rectangle(out, fg, x_max - dx0, x_max - dxf, x_min, x_max, y_max - dy0, y_max - dyf, y_min, y_max);
+    int x_md = (x_hi + x_lo) / 2 + 1;
+    int rx0 = x_hi - (x0 - x_lo);
+    int rxf = x_hi - (xf - x_lo);
+    int y_md = (y_hi + y_lo) / 2 + 1;
+    int ry0 = y_hi - (y0 - y_lo);
+    int ryf = y_hi - (yf - y_lo);
+    fill_rectangle(out, fg,  x0,  xf, x_lo, x_md,  y0,  yf, y_lo, y_md);
+    fill_rectangle(out, fg, rx0, rxf, x_md, x_hi,  y0,  yf, y_lo, y_md);
+    fill_rectangle(out, fg,  x0,  xf, x_lo, x_md, ry0, ryf, y_md, y_hi);
+    fill_rectangle(out, fg, rx0, rxf, x_md, x_hi, ry0, ryf, y_md, y_hi);
 }
 
 static int get_sx(ShowFreqsContext *s, int f)
