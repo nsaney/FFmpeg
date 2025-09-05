@@ -42,6 +42,13 @@ enum ChannelMode    { COMBINED, SEPARATE, NB_CMODES };
 enum FrequencyScale { FS_LINEAR, FS_LOG, FS_RLOG, NB_FSCALES };
 enum AmplitudeScale { AS_LINEAR, AS_SQRT, AS_CBRT, AS_LOG, NB_ASCALES };
 
+typedef struct RectangleBounds {
+    int x_lo;
+    int x_hi;
+    int y_lo;
+    int y_hi;
+} RectangleBounds;
+
 typedef struct ShowFreqsPipeModeContext {
     char *pipe_border_color;
     uint8_t bd[4];
@@ -271,36 +278,36 @@ static inline void draw_dot(AVFrame *out, int x, int y, const uint8_t fg[4])
 }
 
 static inline void fill_rectangle(AVFrame *out, const uint8_t fg[4],
-                                  int x0, int xf, int x_min, int x_max,
-                                  int y0, int yf, int y_min, int y_max)
+                                  RectangleBounds *rb,
+                                  int x0, int xf, int y0, int yf)
 {
     int x;
     if (xf < x0) { x = xf; xf = x0; x0 = x; }
-    if (x0 < x_min) x0 = x_min;
-    if (xf > x_max) xf = x_max;
+    if (x0 < rb->x_lo) x0 = rb->x_lo;
+    if (xf > rb->x_hi) xf = rb->x_hi;
     int y;
     if (yf < y0) { y = yf; yf = y0; y0 = y; }
-    if (y0 < y_min) y0 = y_min;
-    if (yf > y_max) yf = y_max;
+    if (y0 < rb->y_lo) y0 = rb->y_lo;
+    if (yf > rb->y_hi) yf = rb->y_hi;
     for (x = x0; x < xf; x++)
         for (y = y0; y < yf; y++)
             draw_dot(out, x, y, fg);
 }
 
 static inline void fill_and_mirror_rectangle(AVFrame *out, const uint8_t fg[4],
-                                             int x0, int xf, int x_lo, int x_hi,
-                                             int y0, int yf, int y_lo, int y_hi)
+                                             RectangleBounds *rb,
+                                             int x0, int xf, int y0, int yf)
 {
-    int x_md = (x_hi + x_lo) / 2 + 1;
-    int rx0 = x_hi - (x0 - x_lo);
-    int rxf = x_hi - (xf - x_lo);
-    int y_md = (y_hi + y_lo) / 2 + 1;
-    int ry0 = y_hi - (y0 - y_lo);
-    int ryf = y_hi - (yf - y_lo);
-    fill_rectangle(out, fg,  x0,  xf, x_lo, x_md,  y0,  yf, y_lo, y_md);
-    fill_rectangle(out, fg, rx0, rxf, x_md, x_hi,  y0,  yf, y_lo, y_md);
-    fill_rectangle(out, fg,  x0,  xf, x_lo, x_md, ry0, ryf, y_md, y_hi);
-    fill_rectangle(out, fg, rx0, rxf, x_md, x_hi, ry0, ryf, y_md, y_hi);
+    int x_md = (rb->x_hi + rb->x_lo) / 2 + 1;
+    int rx0 = rb->x_hi - (x0 - rb->x_lo);
+    int rxf = rb->x_hi - (xf - rb->x_lo);
+    int y_md = (rb->y_hi + rb->y_lo) / 2 + 1;
+    int ry0 = rb->y_hi - (y0 - rb->y_lo);
+    int ryf = rb->y_hi - (yf - rb->y_lo);
+    fill_rectangle(out, fg, &(RectangleBounds){ rb->x_lo,     x_md, rb->y_lo,     y_md },  x0,  xf,  y0,  yf);
+    fill_rectangle(out, fg, &(RectangleBounds){     x_md, rb->x_hi, rb->y_lo,     y_md }, rx0, rxf,  y0,  yf);
+    fill_rectangle(out, fg, &(RectangleBounds){ rb->x_lo,     x_md,     y_md, rb->y_hi },  x0,  xf, ry0, ryf);
+    fill_rectangle(out, fg, &(RectangleBounds){     x_md, rb->x_hi,     y_md, rb->y_hi }, rx0, rxf, ry0, ryf);
 }
 
 static int get_sx(ShowFreqsContext *s, int f)
@@ -344,9 +351,11 @@ static inline void plot_freq(ShowFreqsContext *s, int ch,
     const float bsize = get_bsize(s, f);
     const int sx = get_sx(s, f);
     int end = outlink->h;
-    int pipe_x0, pipe_xf, pipe_xm, pipe_width;
-    int top, pipe_gap, pipe_y0, pipe_yf, pipe_ym;
+    RectangleBounds rb;
+    int top;
     ShowFreqsPipeModeContext *p = &s->pipe_mode_ctx;
+    int x_md, y_md;
+    int pipe_width, pipe_gap;
     int x, y, i;
 
     switch(s->ascale) {
@@ -421,31 +430,31 @@ static inline void plot_freq(ShowFreqsContext *s, int ch,
             draw_dot(out, x, y, fg);
         break;
     case PIPE:
-        pipe_x0 = sx;
-        pipe_xf = sx + bsize - 1;
-        pipe_width = pipe_xf - pipe_x0;
+        rb.x_lo = sx;
+        rb.x_hi = sx + bsize - 1;
+        pipe_width = rb.x_hi - rb.x_lo;
         if (pipe_width < p->pipe_min_width && y < p->pipe_curr_unused_min_y)
             p->pipe_curr_unused_min_y = y;
-        if (p->pipe_min_width + 1 <= pipe_x0 - p->pipe_next_x0) {
+        if (p->pipe_min_width + 1 <= rb.x_lo - p->pipe_next_x0) {
             y = p->pipe_curr_unused_min_y;
-            pipe_x0 = p->pipe_next_x0;
-            pipe_xf = pipe_x0 + p->pipe_min_width;
+            rb.x_lo = p->pipe_next_x0;
+            rb.x_hi = rb.x_lo + p->pipe_min_width;
             pipe_width = p->pipe_min_width;
         }
         if (pipe_width < p->pipe_min_width)
             break;
-        if (pipe_xf > w)
+        if (rb.x_hi > w)
             break;
         p->pipe_curr_unused_min_y = end;
-        p->pipe_next_x0 = pipe_xf + 1;
-        pipe_xm = (pipe_x0 + pipe_xf) / 2 + 1;
+        p->pipe_next_x0 = rb.x_hi + 1;
+        x_md = (rb.x_lo + rb.x_hi) / 2 + 1;
         //      top  - - - y - -|- - - - - -  end
         // BAR   [........]<====|==============>
         // PIPE  [....<=========|=========>....]
         pipe_gap = (y - top) / 2;
-        pipe_y0 = y - pipe_gap;
-        pipe_yf = end - pipe_gap;
-        pipe_ym = (pipe_y0 + pipe_yf) / 2 + 1;
+        rb.y_lo = y - pipe_gap;
+        rb.y_hi = end - pipe_gap;
+        y_md = (rb.y_lo + rb.y_hi) / 2 + 1;
         if (22 <= pipe_width) {
             // A  B  C  D  E  E  ... E  E  D  C  B  A
             // .  .  .  .  ## ## ...
@@ -456,44 +465,32 @@ static inline void plot_freq(ShowFreqsContext *s, int ch,
             // ## [] fg fg fg fg ...
             // ...            ...
             // cols A
-            x = pipe_x0;
-            y = pipe_y0 + 8;
-            fill_and_mirror_rectangle(out, p->bd, x    , x + 2  , pipe_x0, pipe_xf,
-                                                  y    , pipe_ym, pipe_y0, pipe_yf);
+            x = rb.x_lo;
+            y = rb.y_lo + 8;
+            fill_and_mirror_rectangle(out, p->bd, &rb, x, x + 2, y    , y_md);
             // cols B
-            x = pipe_x0 + 2;
-            y = pipe_y0 + 4;
-            fill_and_mirror_rectangle(out, p->bd, x    , x + 2  , pipe_x0, pipe_xf,
-                                                  y    , y + 4  , pipe_y0, pipe_yf);
-            fill_and_mirror_rectangle(out, p->pg, x    , x + 2  , pipe_x0, pipe_xf,
-                                                  y + 4, pipe_ym, pipe_y0, pipe_yf);
+            x = rb.x_lo + 2;
+            y = rb.y_lo + 4;
+            fill_and_mirror_rectangle(out, p->bd, &rb, x, x + 2, y    , y + 4);
+            fill_and_mirror_rectangle(out, p->pg, &rb, x, x + 2, y + 4, y_md );
             // cols C
-            x = pipe_x0 + 4;
-            y = pipe_y0 + 2;
-            fill_and_mirror_rectangle(out, p->bd, x    , x + 2  , pipe_x0, pipe_xf,
-                                                  y    , y + 2  , pipe_y0, pipe_yf);
-            fill_and_mirror_rectangle(out, p->pg, x    , x + 2  , pipe_x0, pipe_xf,
-                                                  y + 2, y + 6  , pipe_y0, pipe_yf);
-            fill_and_mirror_rectangle(out,    fg, x    , x + 2  , pipe_x0, pipe_xf,
-                                                  y + 6, pipe_ym, pipe_y0, pipe_yf);
+            x = rb.x_lo + 4;
+            y = rb.y_lo + 2;
+            fill_and_mirror_rectangle(out, p->bd, &rb, x, x + 2, y    , y + 2);
+            fill_and_mirror_rectangle(out, p->pg, &rb, x, x + 2, y + 2, y + 6);
+            fill_and_mirror_rectangle(out,    fg, &rb, x, x + 2, y + 6, y_md );
             // cols D
-            x = pipe_x0 + 6;
-            y = pipe_y0 + 2;
-            fill_and_mirror_rectangle(out, p->bd, x    , x + 2  , pipe_x0, pipe_xf,
-                                                  y    , y + 2  , pipe_y0, pipe_yf);
-            fill_and_mirror_rectangle(out, p->pg, x    , x + 2  , pipe_x0, pipe_xf,
-                                                  y + 2, y + 4  , pipe_y0, pipe_yf);
-            fill_and_mirror_rectangle(out,    fg, x    , x + 2  , pipe_x0, pipe_xf,
-                                                  y + 4, pipe_ym, pipe_y0, pipe_yf);
+            x = rb.x_lo + 6;
+            y = rb.y_lo + 2;
+            fill_and_mirror_rectangle(out, p->bd, &rb, x, x + 2, y    , y + 2);
+            fill_and_mirror_rectangle(out, p->pg, &rb, x, x + 2, y + 2, y + 4);
+            fill_and_mirror_rectangle(out,    fg, &rb, x, x + 2, y + 4, y_md );
             // cols E
-            x = pipe_x0 + 8;
-            y = pipe_y0;
-            fill_and_mirror_rectangle(out, p->bd, x    , pipe_xm , pipe_x0, pipe_xf,
-                                                  y    , y + 2   , pipe_y0, pipe_yf);
-            fill_and_mirror_rectangle(out, p->pg, x    , pipe_xm , pipe_x0, pipe_xf,
-                                                  y + 2, y + 4   , pipe_y0, pipe_yf);
-            fill_and_mirror_rectangle(out,    fg, x    , pipe_xm , pipe_x0, pipe_xf,
-                                                  y + 4, pipe_ym , pipe_y0, pipe_yf);
+            x = rb.x_lo + 8;
+            y = rb.y_lo;
+            fill_and_mirror_rectangle(out, p->bd, &rb, x, x_md , y    , y + 2);
+            fill_and_mirror_rectangle(out, p->pg, &rb, x, x_md , y + 2, y + 4);
+            fill_and_mirror_rectangle(out,    fg, &rb, x, x_md , y + 4, y_md );
         } else if (18 <= pipe_width) {
             // A  B  C  D  D  ... D  D  C  B  A
             // .  .  .  ## ## ...
@@ -503,35 +500,26 @@ static inline void plot_freq(ShowFreqsContext *s, int ch,
             // ## [] fg fg fg ...
             // ...      ...
             // cols A
-            x = pipe_x0;
-            y = pipe_y0 + 6;
-            fill_and_mirror_rectangle(out, p->bd, x    , x + 2  , pipe_x0, pipe_xf,
-                                                  y    , pipe_ym, pipe_y0, pipe_yf);
+            x = rb.x_lo;
+            y = rb.y_lo + 6;
+            fill_and_mirror_rectangle(out, p->bd, &rb, x, x + 2, y    , y_md );
             // cols B
-            x = pipe_x0 + 2;
-            y = pipe_y0 + 4;
-            fill_and_mirror_rectangle(out, p->bd, x    , x + 2  , pipe_x0, pipe_xf,
-                                                  y    , y + 2  , pipe_y0, pipe_yf);
-            fill_and_mirror_rectangle(out, p->pg, x    , x + 2  , pipe_x0, pipe_xf,
-                                                  y + 2, pipe_ym, pipe_y0, pipe_yf);
+            x = rb.x_lo + 2;
+            y = rb.y_lo + 4;
+            fill_and_mirror_rectangle(out, p->bd, &rb, x, x + 2, y    , y + 2);
+            fill_and_mirror_rectangle(out, p->pg, &rb, x, x + 2, y + 2, y_md );
             // cols C
-            x = pipe_x0 + 4;
-            y = pipe_y0 + 2;
-            fill_and_mirror_rectangle(out, p->bd, x    , x + 2  , pipe_x0, pipe_xf,
-                                                  y    , y + 2  , pipe_y0, pipe_yf);
-            fill_and_mirror_rectangle(out, p->pg, x    , x + 2  , pipe_x0, pipe_xf,
-                                                  y + 2, y + 4  , pipe_y0, pipe_yf);
-            fill_and_mirror_rectangle(out,    fg, x    , x + 2  , pipe_x0, pipe_xf,
-                                                  y + 4, pipe_ym, pipe_y0, pipe_yf);
+            x = rb.x_lo + 4;
+            y = rb.y_lo + 2;
+            fill_and_mirror_rectangle(out, p->bd, &rb, x, x + 2, y    , y + 2);
+            fill_and_mirror_rectangle(out, p->pg, &rb, x, x + 2, y + 2, y + 4);
+            fill_and_mirror_rectangle(out,    fg, &rb, x, x + 2, y + 4, y_md );
             // cols D
-            x = pipe_x0 + 6;
-            y = pipe_y0;
-            fill_and_mirror_rectangle(out, p->bd, x    , pipe_xm, pipe_x0, pipe_xf,
-                                                  y    , y + 2  , pipe_y0, pipe_yf);
-            fill_and_mirror_rectangle(out, p->pg, x    , pipe_xm, pipe_x0, pipe_xf,
-                                                  y + 2, y + 4  , pipe_y0, pipe_yf);
-            fill_and_mirror_rectangle(out,    fg, x    , pipe_xm, pipe_x0, pipe_xf,
-                                                  y + 4, pipe_ym, pipe_y0, pipe_yf);
+            x = rb.x_lo + 6;
+            y = rb.y_lo;
+            fill_and_mirror_rectangle(out, p->bd, &rb, x, x_md , y    , y + 2);
+            fill_and_mirror_rectangle(out, p->pg, &rb, x, x_md , y + 2, y + 4);
+            fill_and_mirror_rectangle(out,    fg, &rb, x, x_md , y + 4, y_md );
         } else if (14 <= pipe_width) {
             // A  B  C  C  ... C  C  B  A
             // .  .  ## ## ...
@@ -540,37 +528,28 @@ static inline void plot_freq(ShowFreqsContext *s, int ch,
             // ## [] fg fg ...
             // ...      ...
             // cols A
-            x = pipe_x0;
-            y = pipe_y0 + 4;
-            fill_and_mirror_rectangle(out, p->bd, x    , x + 2  , pipe_x0, pipe_xf,
-                                                  y    , pipe_ym, pipe_y0, pipe_yf);
+            x = rb.x_lo;
+            y = rb.y_lo + 4;
+            fill_and_mirror_rectangle(out, p->bd, &rb, x, x + 2, y    , y_md );
             // cols B
-            x = pipe_x0 + 2;
-            y = pipe_y0 + 2;
-            fill_and_mirror_rectangle(out, p->bd, x    , x + 2  , pipe_x0, pipe_xf,
-                                                  y    , y + 2  , pipe_y0, pipe_yf);
-            fill_and_mirror_rectangle(out, p->pg, x    , x + 2  , pipe_x0, pipe_xf,
-                                                  y + 2, pipe_ym, pipe_y0, pipe_yf);
+            x = rb.x_lo + 2;
+            y = rb.y_lo + 2;
+            fill_and_mirror_rectangle(out, p->bd, &rb, x, x + 2, y    , y + 2);
+            fill_and_mirror_rectangle(out, p->pg, &rb, x, x + 2, y + 2, y_md );
             // cols C
-            x = pipe_x0 + 4;
-            y = pipe_y0;
-            fill_and_mirror_rectangle(out, p->bd, x    , pipe_xm, pipe_x0, pipe_xf,
-                                                  y    , y + 2  , pipe_y0, pipe_yf);
-            fill_and_mirror_rectangle(out, p->pg, x    , pipe_xm, pipe_x0, pipe_xf,
-                                                  y + 2, y + 4  , pipe_y0, pipe_yf);
-            fill_and_mirror_rectangle(out,    fg, x    , pipe_xm, pipe_x0, pipe_xf,
-                                                  y + 4, pipe_ym, pipe_y0, pipe_yf);
+            x = rb.x_lo + 4;
+            y = rb.y_lo;
+            fill_and_mirror_rectangle(out, p->bd, &rb, x, x_md , y    , y + 2);
+            fill_and_mirror_rectangle(out, p->pg, &rb, x, x_md , y + 2, y + 4);
+            fill_and_mirror_rectangle(out,    fg, &rb, x, x_md , y + 4, y_md );
         } else {
             if (bsize < 2)
-                pipe_xm = pipe_xf = pipe_x0 + 1;
-            x = pipe_x0;
-            y = pipe_y0;
-            fill_and_mirror_rectangle(out, p->bd, x    , pipe_xm, pipe_x0, pipe_xf,
-                                                  y    , y + 1  , pipe_y0, pipe_yf);
-            fill_and_mirror_rectangle(out, p->pg, x    , pipe_xm, pipe_x0, pipe_xf,
-                                                  y + 1, y + 2  , pipe_y0, pipe_yf);
-            fill_and_mirror_rectangle(out,    fg, x    , pipe_xm, pipe_x0, pipe_xf,
-                                                  y + 2, pipe_ym, pipe_y0, pipe_yf);
+                x_md = rb.x_hi = rb.x_lo + 1;
+            x = rb.x_lo;
+            y = rb.y_lo;
+            fill_and_mirror_rectangle(out, p->bd, &rb, x, x_md , y    , y + 1);
+            fill_and_mirror_rectangle(out, p->pg, &rb, x, x_md , y + 1, y + 2);
+            fill_and_mirror_rectangle(out,    fg, &rb, x, x_md , y + 2, y_md );
         }
         break;
     }
