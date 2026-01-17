@@ -37,10 +37,27 @@
 #include "window_func.h"
 
 enum DataMode       { MAGNITUDE, PHASE, DELAY, NB_DATA };
-enum DisplayMode    { LINE, BAR, DOT, NB_MODES };
+enum DisplayMode    { LINE, BAR, DOT, PIPE, NB_MODES };
 enum ChannelMode    { COMBINED, SEPARATE, NB_CMODES };
 enum FrequencyScale { FS_LINEAR, FS_LOG, FS_RLOG, NB_FSCALES };
 enum AmplitudeScale { AS_LINEAR, AS_SQRT, AS_CBRT, AS_LOG, NB_ASCALES };
+
+typedef struct RectangleBounds {
+    int x_lo;
+    int x_hi;
+    int y_lo;
+    int y_hi;
+} RectangleBounds;
+
+typedef struct ShowFreqsPipeModeContext {
+    char *pipe_border_color;
+    uint8_t bd[4];
+    char *pipe_padding_color;
+    uint8_t pg[4];
+    int pipe_min_width;
+    int pipe_curr_unused_min_y;
+    int pipe_next_x0;
+} ShowFreqsPipeModeContext;
 
 typedef struct ShowFreqsContext {
     const AVClass *class;
@@ -74,9 +91,11 @@ typedef struct ShowFreqsContext {
     int64_t pts;
     int64_t old_pts;
     AVRational frame_rate;
+    ShowFreqsPipeModeContext pipe_mode_ctx;
 } ShowFreqsContext;
 
 #define OFFSET(x) offsetof(ShowFreqsContext, x)
+#define PIPE_MODE_OFFSET(x) OFFSET(pipe_mode_ctx) + offsetof(ShowFreqsPipeModeContext, x)
 #define FLAGS AV_OPT_FLAG_FILTERING_PARAM|AV_OPT_FLAG_VIDEO_PARAM
 
 static const AVOption showfreqs_options[] = {
@@ -88,6 +107,7 @@ static const AVOption showfreqs_options[] = {
         { "line", "show lines",  0, AV_OPT_TYPE_CONST, {.i64=LINE},   0, 0, FLAGS, .unit = "mode" },
         { "bar",  "show bars",   0, AV_OPT_TYPE_CONST, {.i64=BAR},    0, 0, FLAGS, .unit = "mode" },
         { "dot",  "show dots",   0, AV_OPT_TYPE_CONST, {.i64=DOT},    0, 0, FLAGS, .unit = "mode" },
+        { "pipe", "show pipes",  0, AV_OPT_TYPE_CONST, {.i64=PIPE},   0, 0, FLAGS, .unit = "mode" },
     { "ascale", "set amplitude scale", OFFSET(ascale), AV_OPT_TYPE_INT, {.i64=AS_LOG}, 0, NB_ASCALES-1, FLAGS, .unit = "ascale" },
         { "lin",  "linear",      0, AV_OPT_TYPE_CONST, {.i64=AS_LINEAR}, 0, 0, FLAGS, .unit = "ascale" },
         { "sqrt", "square root", 0, AV_OPT_TYPE_CONST, {.i64=AS_SQRT},   0, 0, FLAGS, .unit = "ascale" },
@@ -111,6 +131,9 @@ static const AVOption showfreqs_options[] = {
         { "phase",     "show phase",      0, AV_OPT_TYPE_CONST, {.i64=PHASE},     0, 0, FLAGS, .unit = "data" },
         { "delay",     "show group delay",0, AV_OPT_TYPE_CONST, {.i64=DELAY},     0, 0, FLAGS, .unit = "data" },
     { "channels", "set channels to draw", OFFSET(ch_layout_str), AV_OPT_TYPE_STRING, {.str="all"}, 0, 0, FLAGS },
+    { "pipe_border_color",  "set pipe_border_color",  PIPE_MODE_OFFSET(pipe_border_color),  AV_OPT_TYPE_STRING, {.str="0x3f3f3f"},  0,  0, FLAGS },
+    { "pipe_padding_color", "set pipe_padding_color", PIPE_MODE_OFFSET(pipe_padding_color), AV_OPT_TYPE_STRING, {.str="0xdfdfdf"},  0,  0, FLAGS },
+    { "pipe_min_width",     "set pipe_min_width",     PIPE_MODE_OFFSET(pipe_min_width),     AV_OPT_TYPE_INT,    {.i64=14},       0, 65536, FLAGS },
     { NULL }
 };
 
@@ -243,7 +266,7 @@ static int config_output(AVFilterLink *outlink)
     return 0;
 }
 
-static inline void draw_dot(AVFrame *out, int x, int y, uint8_t fg[4])
+static inline void draw_dot(AVFrame *out, int x, int y, const uint8_t fg[4])
 {
 
     uint32_t color = AV_RL32(out->data[0] + y * out->linesize[0] + x * 4);
@@ -252,6 +275,39 @@ static inline void draw_dot(AVFrame *out, int x, int y, uint8_t fg[4])
         AV_WL32(out->data[0] + y * out->linesize[0] + x * 4, AV_RL32(fg) | color);
     else
         AV_WL32(out->data[0] + y * out->linesize[0] + x * 4, AV_RL32(fg));
+}
+
+static inline void fill_rectangle(AVFrame *out, const uint8_t fg[4],
+                                  RectangleBounds *rb,
+                                  int x0, int xf, int y0, int yf)
+{
+    int x;
+    if (xf < x0) { x = xf; xf = x0; x0 = x; }
+    if (x0 < rb->x_lo) x0 = rb->x_lo;
+    if (xf > rb->x_hi) xf = rb->x_hi;
+    int y;
+    if (yf < y0) { y = yf; yf = y0; y0 = y; }
+    if (y0 < rb->y_lo) y0 = rb->y_lo;
+    if (yf > rb->y_hi) yf = rb->y_hi;
+    for (x = x0; x < xf; x++)
+        for (y = y0; y < yf; y++)
+            draw_dot(out, x, y, fg);
+}
+
+static inline void fill_and_mirror_rectangle(AVFrame *out, const uint8_t fg[4],
+                                             RectangleBounds *rb,
+                                             int x0, int xf, int y0, int yf)
+{
+    int x_md = (rb->x_hi + rb->x_lo) / 2 + 1;
+    int rx0 = rb->x_hi - (x0 - rb->x_lo);
+    int rxf = rb->x_hi - (xf - rb->x_lo);
+    int y_md = (rb->y_hi + rb->y_lo) / 2 + 1;
+    int ry0 = rb->y_hi - (y0 - rb->y_lo);
+    int ryf = rb->y_hi - (yf - rb->y_lo);
+    fill_rectangle(out, fg, &(RectangleBounds){ rb->x_lo,     x_md, rb->y_lo,     y_md },  x0,  xf,  y0,  yf);
+    fill_rectangle(out, fg, &(RectangleBounds){     x_md, rb->x_hi, rb->y_lo,     y_md }, rx0, rxf,  y0,  yf);
+    fill_rectangle(out, fg, &(RectangleBounds){ rb->x_lo,     x_md,     y_md, rb->y_hi },  x0,  xf, ry0, ryf);
+    fill_rectangle(out, fg, &(RectangleBounds){     x_md, rb->x_hi,     y_md, rb->y_hi }, rx0, rxf, ry0, ryf);
 }
 
 static int get_sx(ShowFreqsContext *s, int f)
@@ -295,6 +351,11 @@ static inline void plot_freq(ShowFreqsContext *s, int ch,
     const float bsize = get_bsize(s, f);
     const int sx = get_sx(s, f);
     int end = outlink->h;
+    RectangleBounds rb;
+    int top;
+    ShowFreqsPipeModeContext *p = &s->pipe_mode_ctx;
+    int x_md, y_md;
+    int pipe_width, pipe_gap;
     int x, y, i;
 
     switch(s->ascale) {
@@ -314,11 +375,14 @@ static inline void plot_freq(ShowFreqsContext *s, int ch,
 
     switch (s->cmode) {
     case COMBINED:
+        top = 0;
+        end = outlink->h;
         y = a * outlink->h - 1;
         break;
     case SEPARATE:
+        top = (outlink->h / s->nb_draw_channels) * ch;
         end = (outlink->h / s->nb_draw_channels) * (ch + 1);
-        y = (outlink->h / s->nb_draw_channels) * ch + a * (outlink->h / s->nb_draw_channels) - 1;
+        y = top + a * (outlink->h / s->nb_draw_channels) - 1;
         break;
     default:
         av_assert0(0);
@@ -365,6 +429,129 @@ static inline void plot_freq(ShowFreqsContext *s, int ch,
         for (x = sx; x < sx + bsize && x < w; x++)
             draw_dot(out, x, y, fg);
         break;
+    case PIPE:
+        rb.x_lo = sx;
+        rb.x_hi = sx + bsize - 1;
+        pipe_width = rb.x_hi - rb.x_lo;
+        if (pipe_width < p->pipe_min_width && y < p->pipe_curr_unused_min_y)
+            p->pipe_curr_unused_min_y = y;
+        if (p->pipe_min_width + 1 <= rb.x_lo - p->pipe_next_x0) {
+            y = p->pipe_curr_unused_min_y;
+            rb.x_lo = p->pipe_next_x0;
+            rb.x_hi = rb.x_lo + p->pipe_min_width;
+            pipe_width = p->pipe_min_width;
+        }
+        if (pipe_width < p->pipe_min_width)
+            break;
+        if (rb.x_hi > w)
+            break;
+        p->pipe_curr_unused_min_y = end;
+        p->pipe_next_x0 = rb.x_hi + 1;
+        x_md = (rb.x_lo + rb.x_hi) / 2 + 1;
+        //      top  - - - y - -|- - - - - -  end
+        // BAR   [........]<====|==============>
+        // PIPE  [....<=========|=========>....]
+        pipe_gap = (y - top) / 2;
+        rb.y_lo = y - pipe_gap;
+        rb.y_hi = end - pipe_gap;
+        y_md = (rb.y_lo + rb.y_hi) / 2 + 1;
+        if (22 <= pipe_width) {
+            // A  B  C  D  E  E  ... E  E  D  C  B  A
+            // .  .  .  .  ## ## ...
+            // .  .  ## ## [] []
+            // .  ## [] [] fg fg
+            // .  ## [] fg fg fg
+            // ## [] fg fg fg fg
+            // ## [] fg fg fg fg ...
+            // ...            ...
+            // cols A
+            x = rb.x_lo;
+            y = rb.y_lo + 8;
+            fill_and_mirror_rectangle(out, p->bd, &rb, x, x + 2, y    , y_md);
+            // cols B
+            x = rb.x_lo + 2;
+            y = rb.y_lo + 4;
+            fill_and_mirror_rectangle(out, p->bd, &rb, x, x + 2, y    , y + 4);
+            fill_and_mirror_rectangle(out, p->pg, &rb, x, x + 2, y + 4, y_md );
+            // cols C
+            x = rb.x_lo + 4;
+            y = rb.y_lo + 2;
+            fill_and_mirror_rectangle(out, p->bd, &rb, x, x + 2, y    , y + 2);
+            fill_and_mirror_rectangle(out, p->pg, &rb, x, x + 2, y + 2, y + 6);
+            fill_and_mirror_rectangle(out,    fg, &rb, x, x + 2, y + 6, y_md );
+            // cols D
+            x = rb.x_lo + 6;
+            y = rb.y_lo + 2;
+            fill_and_mirror_rectangle(out, p->bd, &rb, x, x + 2, y    , y + 2);
+            fill_and_mirror_rectangle(out, p->pg, &rb, x, x + 2, y + 2, y + 4);
+            fill_and_mirror_rectangle(out,    fg, &rb, x, x + 2, y + 4, y_md );
+            // cols E
+            x = rb.x_lo + 8;
+            y = rb.y_lo;
+            fill_and_mirror_rectangle(out, p->bd, &rb, x, x_md , y    , y + 2);
+            fill_and_mirror_rectangle(out, p->pg, &rb, x, x_md , y + 2, y + 4);
+            fill_and_mirror_rectangle(out,    fg, &rb, x, x_md , y + 4, y_md );
+        } else if (18 <= pipe_width) {
+            // A  B  C  D  D  ... D  D  C  B  A
+            // .  .  .  ## ## ...
+            // .  .  ## [] []
+            // .  ## [] fg fg
+            // ## [] fg fg fg ...
+            // ## [] fg fg fg ...
+            // ...      ...
+            // cols A
+            x = rb.x_lo;
+            y = rb.y_lo + 6;
+            fill_and_mirror_rectangle(out, p->bd, &rb, x, x + 2, y    , y_md );
+            // cols B
+            x = rb.x_lo + 2;
+            y = rb.y_lo + 4;
+            fill_and_mirror_rectangle(out, p->bd, &rb, x, x + 2, y    , y + 2);
+            fill_and_mirror_rectangle(out, p->pg, &rb, x, x + 2, y + 2, y_md );
+            // cols C
+            x = rb.x_lo + 4;
+            y = rb.y_lo + 2;
+            fill_and_mirror_rectangle(out, p->bd, &rb, x, x + 2, y    , y + 2);
+            fill_and_mirror_rectangle(out, p->pg, &rb, x, x + 2, y + 2, y + 4);
+            fill_and_mirror_rectangle(out,    fg, &rb, x, x + 2, y + 4, y_md );
+            // cols D
+            x = rb.x_lo + 6;
+            y = rb.y_lo;
+            fill_and_mirror_rectangle(out, p->bd, &rb, x, x_md , y    , y + 2);
+            fill_and_mirror_rectangle(out, p->pg, &rb, x, x_md , y + 2, y + 4);
+            fill_and_mirror_rectangle(out,    fg, &rb, x, x_md , y + 4, y_md );
+        } else if (14 <= pipe_width) {
+            // A  B  C  C  ... C  C  B  A
+            // .  .  ## ## ...
+            // .  ## [] []
+            // ## [] fg fg
+            // ## [] fg fg ...
+            // ...      ...
+            // cols A
+            x = rb.x_lo;
+            y = rb.y_lo + 4;
+            fill_and_mirror_rectangle(out, p->bd, &rb, x, x + 2, y    , y_md );
+            // cols B
+            x = rb.x_lo + 2;
+            y = rb.y_lo + 2;
+            fill_and_mirror_rectangle(out, p->bd, &rb, x, x + 2, y    , y + 2);
+            fill_and_mirror_rectangle(out, p->pg, &rb, x, x + 2, y + 2, y_md );
+            // cols C
+            x = rb.x_lo + 4;
+            y = rb.y_lo;
+            fill_and_mirror_rectangle(out, p->bd, &rb, x, x_md , y    , y + 2);
+            fill_and_mirror_rectangle(out, p->pg, &rb, x, x_md , y + 2, y + 4);
+            fill_and_mirror_rectangle(out,    fg, &rb, x, x_md , y + 4, y_md );
+        } else {
+            if (bsize < 2)
+                x_md = rb.x_hi = rb.x_lo + 1;
+            x = rb.x_lo;
+            y = rb.y_lo;
+            fill_and_mirror_rectangle(out, p->bd, &rb, x, x_md , y    , y + 1);
+            fill_and_mirror_rectangle(out, p->pg, &rb, x, x_md , y + 1, y + 2);
+            fill_and_mirror_rectangle(out,    fg, &rb, x, x_md , y + 2, y_md );
+        }
+        break;
     }
 }
 
@@ -373,6 +560,7 @@ static int plot_freqs(AVFilterLink *inlink, int64_t pts)
     AVFilterContext *ctx = inlink->dst;
     AVFilterLink *outlink = ctx->outputs[0];
     ShowFreqsContext *s = ctx->priv;
+    ShowFreqsPipeModeContext *p = &s->pipe_mode_ctx;
     AVFrame *in = s->window;
     const int win_size = s->win_size;
     char *colors, *color, *saveptr = NULL;
@@ -431,6 +619,15 @@ static int plot_freqs(AVFilterLink *inlink, int64_t pts)
         color = av_strtok(ch == 0 ? colors : NULL, " |", &saveptr);
         if (color)
             av_parse_color(fg, color, -1, ctx);
+
+        if (s->mode == PIPE) {
+            if (p->pipe_border_color)
+                av_parse_color(p->bd, p->pipe_border_color, -1, ctx);
+            if (p->pipe_padding_color)
+                av_parse_color(p->pg, p->pipe_padding_color, -1, ctx);
+            p->pipe_curr_unused_min_y = outlink->h;
+            p->pipe_next_x0 = 0;
+        }
 
         if (s->bypass[ch])
             continue;

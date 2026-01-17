@@ -32981,6 +32981,7 @@ It accepts the following values:
 @item line
 @item bar
 @item dot
+@item pipe
 @end table
 Default is @code{bar}.
 
@@ -33092,6 +33093,15 @@ Default is @code{magnitude}.
 
 @item channels
 Set channels to use when processing audio. By default all are processed.
+
+@item pipe_border_color
+Specify color of pipe border for @code{pipe} mode. Default is @code{0x3f3f3f}.
+
+@item pipe_padding_color
+Specify color of pipe padding for @code{pipe} mode. Default is @code{0xdfdfdf}.
+
+@item pipe_min_width
+Set minimum width for pipes in @code{pipe} mode. In range @code{[0, 65536]}. Default is @code{14}.
 @end table
 
 @section showspatial
